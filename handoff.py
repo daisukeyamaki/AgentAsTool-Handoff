@@ -102,10 +102,9 @@ def handoff_node(state: MainState) -> Command:
     for msg in reversed(state["messages"]):
         if isinstance(msg, ToolMessage):
             if "transfer_to_" in msg.name:
-                print(f"[HANDOFF] {msg.name.upper()}\n")
                 return Command(goto=HANDOFF[msg.name], update={"question": msg.content})
 
-def add_agent(g, name, tools, handoffs, role, tool_name):
+def add_agent(graph_builder, name, tools, handoffs, role, tool_name):
     llm_1 = llm.bind_tools(tools)
     llm_2 = llm.bind_tools(handoffs)
 
@@ -117,16 +116,12 @@ def add_agent(g, name, tools, handoffs, role, tool_name):
     - {ROLE}以外の不明な点は自分で答えず、必ず適切な transfer_to_* を呼ぶ。
     - すべて揃っていれば、ツールを呼ばず、履歴中のすべてのツール結果を踏まえて、質問全体に日本語で簡潔に答える。
     """
-
     
     def tool_judge_node(state: MainState) -> dict:
         messages = [
             SystemMessage(content=TOOL_JUDGE_SYSTEM_PROMPT.format(ROLE=role, TOOL_NAME=tool_name)),
             HumanMessage(content=state["question"]),
         ]
-        print(f"[{name.upper()}]")
-        print(messages)
-        print()
         with yaspin(text=f"[{name.upper()}]") as spinner:
             response = llm_1.invoke(messages)
         return {"messages": [response]}
@@ -140,61 +135,62 @@ def add_agent(g, name, tools, handoffs, role, tool_name):
                 if "transfer_to_" not in msg.name:
                     messages.append(msg)
         messages = [SystemMessage(content=HANDOFF_JUDGE_SYSTEM_PROMPT.format(ROLE=role))] + messages 
-        print(f"[{name.upper()}]")
-        print(messages)
-        print()
-        with yaspin(text=f"[{name.upper()}] [VERIFY]") as spinner:
+
+        with yaspin(text=f"[{name.upper()}]") as spinner:
             response = llm_2.invoke(messages)
+        
+        if response.tool_calls:
+            print(f"[{name.upper()}] {response.content}")
+            print(f"[{name.upper()}] {response.tool_calls[-1]['args']['question']} -> [{response.tool_calls[-1]['name'].replace('transfer_to_', '').upper()}]")
+        else:
+            print(f"[{name.upper()}] {response.content} -> [USER]")
         return {"messages": [response]}
 
-    g.add_node(f"{name}", tool_judge_node)
-    g.add_node(f"{name}_verify", handoff_judge_node)
-    g.add_node(f"{name}_tools", ToolNode(tools))
-    g.add_node(f"{name}_handoff_select", ToolNode(handoffs))
-    g.add_conditional_edges(
+    graph_builder.add_node(f"{name}", tool_judge_node)
+    graph_builder.add_node(f"{name}_verify", handoff_judge_node)
+    graph_builder.add_node(f"{name}_tools", ToolNode(tools))
+    graph_builder.add_node(f"{name}_handoff_select", ToolNode(handoffs))
+    graph_builder.add_conditional_edges(
         f"{name}",
         tools_condition,
         {"tools": f"{name}_tools", END: f"{name}_verify"},
     )
-    g.add_edge(f"{name}_tools", f"{name}_verify")
-    g.add_conditional_edges(
+    graph_builder.add_edge(f"{name}_tools", f"{name}_verify")
+    graph_builder.add_conditional_edges(
         f"{name}_verify",
         tools_condition,
         {"tools": f"{name}_handoff_select", END: END},
     )
-    g.add_edge(f"{name}_handoff_select", "handoff")
+    graph_builder.add_edge(f"{name}_handoff_select", "handoff")
 
-def call_model(state: MainState) -> dict:
+def router_node(state: MainState) -> dict:
     SYSTEM_PROMPT_TEMPLATE = """あなたユーザーの質問に対して、必ず適切な transfer_to_* を一つ選びます。"""
     llm_with_handoffs = llm.bind_tools([transfer_to_time_agent, transfer_to_weather_agent])
     messages = [SystemMessage(content=SYSTEM_PROMPT_TEMPLATE)] + state["messages"]
-    print("[ENTRY AGENT]")
-    print(messages)
-    print()
-
-    with yaspin(text="[ENTRY_AGENT]") as spinner:
+    print(f"[USER] {state['question']} -> [ROUTER_AGENT]")
+    with yaspin(text="[ROUTER_AGENT]") as spinner:
         response = llm_with_handoffs.invoke(messages)
+    print(f"[ROUTER_AGENT] {response.tool_calls[-1]['args']['question']} -> [{response.tool_calls[-1]['name'].replace('transfer_to_', '').upper()}]")
     return {"messages": [response]}
 
-g = StateGraph(MainState)
-g.add_node("agent", call_model)
-g.add_node("tools", ToolNode([transfer_to_time_agent, transfer_to_weather_agent]))
-g.add_node("handoff", handoff_node)
+def build_graph():
+    graph_builder = StateGraph(MainState)
+    graph_builder.add_node("router", router_node)
+    graph_builder.add_node("tools", ToolNode([transfer_to_time_agent, transfer_to_weather_agent]))
+    graph_builder.add_node("handoff", handoff_node)
 
-add_agent(g, "time_agent", [get_time], [transfer_to_weather_agent], "時刻", "get_time")
-add_agent(g, "weather_agent", [get_weather], [transfer_to_time_agent], "天気", "get_weather")
+    add_agent(graph_builder, "time_agent", [get_time], [transfer_to_weather_agent], "時刻", "get_time")
+    add_agent(graph_builder, "weather_agent", [get_weather], [transfer_to_time_agent], "天気", "get_weather")
 
-g.add_edge(START, "agent")
-g.add_edge("agent", "tools")
-g.add_edge("tools", "handoff")
+    graph_builder.add_edge(START, "router")
+    graph_builder.add_edge("router", "tools")
+    graph_builder.add_edge("tools", "handoff")
 
-app = g.compile()
+    return graph_builder.compile()
 
 if __name__ == "__main__":
     query = "現在の時刻と東京の天気を教えて"
-    out = app.invoke({"messages": [HumanMessage(content=query)], "question": query})
-    messages = out["messages"]
-    print("\n====")
-    for msg in messages:        
-        print(msg)
+    graph = build_graph()
+    graph.invoke({"messages": [HumanMessage(content=query)], "question": query})
+
     
