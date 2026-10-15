@@ -1,6 +1,6 @@
 # Toy Examples of Agent as Tool / Handoff
 
-LangGraph で実装する 2 つのマルチエージェント構成 **Agent as Tool**(Supervisor 型)と **Handoff**(制御移譲型)の比較用サンプルです。LLM は [Ollama](https://ollama.com/) 経由でローカル実行します。
+LangGraph で実装する 2 つのマルチエージェント構成 **Agent as Tool**(Supervisor 型)と **Handoff**(制御移譲型)の比較用トイサンプルです。LLM は [Ollama](https://ollama.com/) 経由でローカル実行します。
 
 同じ質問「現在の時刻と東京の天気を教えて」に対して、両パターンがどのようにエージェント間でやり取りするかを確認できます。
 
