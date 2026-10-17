@@ -107,8 +107,8 @@ async def time_worker(query: str) -> str:
 async def weather_worker(query: str) -> str:
 
     WORKER_SYSTEM_PROMPT = """あなたは天気担当エージェントです。
-    ユーザーの質問に対して、 weather_time ツールを使って回答してください。
-    - 天気に関する質問には必ず weather_time ツールを使うこと。
+    ユーザーの質問に対して、 get_weather ツールを使って回答してください。
+    - 天気に関する質問には必ず get_weather ツールを使うこと。
     - 十分な情報が得られたら、日本語で簡潔に回答すること。
     """
     class SubState(TypedDict):
@@ -175,13 +175,14 @@ class MainState(TypedDict):
     messages: Annotated[list[BaseMessage], add_messages]
 
 MAIN_SYSTEM_PROMPT = """あなたは有能なアシスタントです。
-ユーザーの質問に関して、 time_tool / weather_tool ツールを使って適切に回答してください。
+ユーザーの質問に関して、 get_time / get_weather ツールを使って適切に回答してください。
 
-- 現在時刻に関する質問は必ず time_tool を使うこと。
-- 現在の東京の天気に関する質問は必ず weather_tool を使うこと。
+- 現在時刻に関する質問は必ず get_time を使うこと。
+- 現在の東京の天気に関する質問は必ず get_weather を使うこと。
 - ツールへの質問は一つにまとめず、複数回に分けて一つ一つ調べること。
 - 十分な情報が得られたら、日本語で分かりやすく回答すること。
 """
+
 
 async def call_model(state: MainState) -> dict:
     messages = [SystemMessage(content=MAIN_SYSTEM_PROMPT)] + state["messages"]
